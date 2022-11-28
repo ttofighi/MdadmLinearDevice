@@ -18,14 +18,36 @@ int cli_sd = -1;
 It may need to call the system call "read" multiple times to reach the given size len. 
 */
 static bool nread(int fd, int len, uint8_t *buf) {
-  return false;
+  int fdRead = 0;
+  while (fdRead < len){
+    int result = read(fd, &buf[fdRead], len - fdRead);
+    
+    if (result < 0){
+      return false;
+    }
+    else{
+      fdRead += result;
+    }
+  }
+  return true;
 }
 
 /* attempts to write n bytes to fd; returns true on success and false on failure 
 It may need to call the system call "write" multiple times to reach the size len.
 */
 static bool nwrite(int fd, int len, uint8_t *buf) {
-  return false;
+  int fdWrite = 0;
+
+  while(fdWrite < len){
+    int result = write(fd, &buf[fdWrite], len - fdWrite);
+    if (result < 0){
+      return false;
+    }
+    else{
+      fdWrite += result;
+    }
+  }
+  return true;
 }
 
 /* Through this function call the client attempts to receive a packet from sd 
@@ -43,6 +65,28 @@ and then use the length field in the header to determine whether it is needed to
 a block of data from the server. You may use the above nread function here.  
 */
 static bool recv_packet(int sd, uint32_t *op, uint8_t *ret, uint8_t *block) {
+  uint8_t header[HEADER_LEN];
+  uint16_t len = 0;
+
+  if (nread(sd, HEADER_LEN, header) == false){
+    return false;
+  }
+  
+  memcpy(&len, header, 2);
+  memcpy(op, header + 2, 4);
+  memcpy(ret, header + 2, 2);
+
+  len = ntohs(len);
+  *op = ntohl(*op);
+  *ret = ntohs(*ret);
+
+  if(len == (HEADER_LEN + JBOD_BLOCK_SIZE)){
+    if(!nread(sd, JBOD_BLOCK_SIZE, block)){
+      return false;
+    }
+  }
+
+  return true;
 }
 
 
@@ -58,6 +102,35 @@ The above information (when applicable) has to be wrapped into a jbod request pa
 You may call the above nwrite function to do the actual sending.  
 */
 static bool send_packet(int sd, uint32_t op, uint8_t *block) {
+  uint16_t len = HEADER_LEN;
+  uint8_t packet[HEADER_LEN + JBOD_BLOCK_SIZE];
+  uint32_t cmd = op >> 12;
+
+  if (cmd == JBOD_WRITE_BLOCK){
+    len += JBOD_BLOCK_SIZE;
+  }
+
+  len = htons(len);
+  op = htonl(op);
+
+  memcpy(packet, &len, 2);
+  memcpy(packet + 2, &op, 4);
+
+  if(cmd == JBOD_WRITE_BLOCK){
+    memcpy(packet + HEADER_LEN, block, JBOD_BLOCK_SIZE);
+    if(nwrite(sd, len, packet)){
+      return true;
+    }
+  }
+
+  else{
+    if(nwrite(sd, len, packet)){
+      return true;
+    }
+  }
+
+  return false;
+
 }
 
 
@@ -68,6 +141,27 @@ static bool send_packet(int sd, uint32_t op, uint8_t *block) {
  * you will not call it in mdadm.c
 */
 bool jbod_connect(const char *ip, uint16_t port) {
+  int sock;
+  struct sockaddr_in caddr;
+
+  caddr.sin_family = AF_INET;
+  caddr.sin_port = htons(port);
+
+  if (inet_aton(ip, &(caddr.sin_addr)) != 0){
+    sock = socket(PF_INET, SOCK_STREAM, 0);
+
+    if(sock == -1){
+      return false;
+    }
+
+    cli_sd = sock;
+
+    if(connect(sock, (const struct sockaddr *)&caddr, sizeof(caddr)) == -1){
+      return false;
+    }
+    return true;
+  }
+  return false;
 }
 
 
@@ -75,6 +169,8 @@ bool jbod_connect(const char *ip, uint16_t port) {
 
 /* disconnects from the server and resets cli_sd */
 void jbod_disconnect(void) {
+  close(cli_sd);
+  cli_sd = -1;
 }
 
 
@@ -86,4 +182,9 @@ The meaning of each parameter is the same as in the original jbod_operation func
 return: 0 means success, -1 means failure.
 */
 int jbod_client_operation(uint32_t op, uint8_t *block) {
+  uint8_t ret = 0;
+
+  send_packet(cli_sd, op, block);
+  recv_packet(cli_sd, &op, &ret, block);
+  return ret;
 }
