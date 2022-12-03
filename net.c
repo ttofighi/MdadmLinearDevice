@@ -18,11 +18,12 @@ int cli_sd = -1;
 It may need to call the system call "read" multiple times to reach the given size len. 
 */
 static bool nread(int fd, int len, uint8_t *buf) {
-  int fdRead = 0;
+ int fdRead = 0;
   while (fdRead < len){
     int result = read(fd, &buf[fdRead], len - fdRead);
     
     if (result < 0){
+      printf("error with nread");
       return false;
     }
     else{
@@ -41,6 +42,7 @@ static bool nwrite(int fd, int len, uint8_t *buf) {
   while(fdWrite < len){
     int result = write(fd, &buf[fdWrite], len - fdWrite);
     if (result < 0){
+      printf("error with nwrite");
       return false;
     }
     else{
@@ -66,22 +68,23 @@ a block of data from the server. You may use the above nread function here.
 */
 static bool recv_packet(int sd, uint32_t *op, uint8_t *ret, uint8_t *block) {
   uint8_t header[HEADER_LEN];
-  uint16_t len = 0;
+  uint8_t len;
 
-  if (nread(sd, HEADER_LEN, header) == false){
+  if (nread(sd, HEADER_LEN, header) == false){ //if header read isn't successful, return false
+    printf("error");
     return false;
   }
-  
-  memcpy(&len, header, 2);
-  memcpy(op, header + 2, 4);
-  memcpy(ret, header + 2, 2);
+
+  memcpy(&len, header, sizeof(len)); //0
+  memcpy(op, &header[sizeof(len)], sizeof(*op)); //add size of len and header
+  memcpy(ret, &header[sizeof(*op) + sizeof(len)], sizeof(*ret)); //add size of len, op, and header together
 
   len = ntohs(len);
   *op = ntohl(*op);
   *ret = ntohs(*ret);
 
   if(len == (HEADER_LEN + JBOD_BLOCK_SIZE)){
-    if(!nread(sd, JBOD_BLOCK_SIZE, block)){
+    if (nread(sd, JBOD_BLOCK_SIZE, block) == false){
       return false;
     }
   }
@@ -102,35 +105,26 @@ The above information (when applicable) has to be wrapped into a jbod request pa
 You may call the above nwrite function to do the actual sending.  
 */
 static bool send_packet(int sd, uint32_t op, uint8_t *block) {
-  uint16_t len = HEADER_LEN;
   uint8_t packet[HEADER_LEN + JBOD_BLOCK_SIZE];
   uint32_t cmd = op >> 12;
+  uint16_t temp;
+  uint16_t len = HEADER_LEN;
 
   if (cmd == JBOD_WRITE_BLOCK){
     len += JBOD_BLOCK_SIZE;
   }
 
-  len = htons(len);
+  temp = htons(len);
   op = htonl(op);
 
-  memcpy(packet, &len, 2);
-  memcpy(packet + 2, &op, 4);
+  memcpy(packet + sizeof(temp), &temp, sizeof(temp));
+  memcpy(packet + 3, &op, sizeof(op));
 
-  if(cmd == JBOD_WRITE_BLOCK){
+  if(len > HEADER_LEN){
     memcpy(packet + HEADER_LEN, block, JBOD_BLOCK_SIZE);
-    if(nwrite(sd, len, packet)){
-      return true;
-    }
   }
 
-  else{
-    if(nwrite(sd, len, packet)){
-      return true;
-    }
-  }
-
-  return false;
-
+  return nwrite(sd, len, packet);
 }
 
 
@@ -141,27 +135,26 @@ static bool send_packet(int sd, uint32_t op, uint8_t *block) {
  * you will not call it in mdadm.c
 */
 bool jbod_connect(const char *ip, uint16_t port) {
-  int sock;
   struct sockaddr_in caddr;
+  int sock = socket(PF_INET, SOCK_STREAM, 0);
 
+  //setup address info
   caddr.sin_family = AF_INET;
   caddr.sin_port = htons(port);
 
-  if (inet_aton(ip, &(caddr.sin_addr)) != 0){
-    sock = socket(PF_INET, SOCK_STREAM, 0);
-
-    if(sock == -1){
-      return false;
-    }
-
-    cli_sd = sock;
-
-    if(connect(sock, (const struct sockaddr *)&caddr, sizeof(caddr)) == -1){
-      return false;
-    }
-    return true;
+  if(sock == -1){
+    printf("fail");
+    return false;
   }
-  return false;
+
+  inet_aton(ip, &caddr.sin_addr);
+  cli_sd = sock;
+
+  //connect socket file descriptor to the specified address
+  if (connect(cli_sd, (const struct sockaddr *)&caddr, sizeof(caddr)) == -1){
+    return false;
+  }
+  return true;
 }
 
 
