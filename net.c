@@ -54,7 +54,7 @@ static bool nwrite(int fd, int len, uint8_t *buf) {
 
 //checks if a bit is set to 1 or not
 //n is the number, k is the position of the bit you want to check
-int checkBit(int n, int k)
+/*int checkBit(int n, int k)
 {
   if (n & (1 << k)){
     printf("bit set\n");
@@ -64,7 +64,7 @@ int checkBit(int n, int k)
     printf("bit not set\n");
     return false;
     }
-}
+}*/
 
 /* Through this function call the client attempts to receive a packet from sd 
 (i.e., receiving a response from the server.). It happens after the client previously 
@@ -93,18 +93,17 @@ static bool recv_packet(int sd, uint32_t *op, uint8_t *ret, uint8_t *block) {
   *op = ntohl(*op);
   *ret = ntohs(*ret);
 
-  memcpy(op, &header[sizeof(*ret)], sizeof(*op)); //copy 1 byte to op
+  memcpy(op, &header, sizeof(*op)); //copy from start of the header
 
   //check if lowest bit is 0
   //if it is, do a memcpy for ret
-  //false means the lowest bit is 0
-  if(checkBit(*ret, 0) == false){
-    memcpy(ret, &header[sizeof(*op)], sizeof(*ret)); //copy 4 byte to ret
+  if((*ret & 10) == 2){
+    memcpy(ret, &header[sizeof(*op)], sizeof(*ret));
   }
 
   //check if block data exists by checking if the second lowest bit of ret is 1. if it is, read block
   //true means the second lowest bit is 1
-  if(checkBit(*ret, 1) == true){
+  if((*ret & 10) == 2){
     if (nread(sd, JBOD_BLOCK_SIZE, block) == false){ //read from block
         return false;
     }
@@ -132,20 +131,30 @@ static bool send_packet(int sd, uint32_t op, uint8_t *block) {
   uint32_t cmd = op >> 12;
   uint8_t ret = 0;
 
+  if (cmd == JBOD_WRITE_BLOCK){
+    ret = 2;
+  }
+  
+  else{
+    ret = 0;
+  }
   //conversion
   op = htonl(op);
   ret = htons(ret);
 
-  memcpy(&packet[sizeof(ret)], &op, sizeof(op)); //write to packet for 5 bytes
-  memcpy(&packet[sizeof(op)], &ret, sizeof(ret));
-
+  memcpy(&packet, &op, sizeof(op)); //write op to packet
+  
   //when command is JBOD_WRITE_BLOCK, write block to packet
   if (cmd == JBOD_WRITE_BLOCK){
+      memcpy(&packet[sizeof(op)], &ret, sizeof(ret));
       memcpy(&packet[HEADER_LEN], block, JBOD_BLOCK_SIZE);
       if(nwrite(sd, HEADER_LEN + JBOD_BLOCK_SIZE, packet) == false){ //write packet to server
         return false;
       }
     }
+  else{
+    return nwrite(sd, HEADER_LEN, packet);
+  }
   return true;
 }
 
