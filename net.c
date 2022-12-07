@@ -18,16 +18,16 @@ int cli_sd = -1;
 It may need to call the system call "read" multiple times to reach the given size len. 
 */
 static bool nread(int fd, int len, uint8_t *buf) {
- int fdRead = 0;
-  while (fdRead < len){
-    int result = read(fd, &buf[fdRead], len - fdRead);
+ int fdRead = 0; //holds number of bytes read
+  while (fdRead < len){ //loop continues until we read len bytes
+    int result = read(fd, &buf[fdRead], len - fdRead); //read from buffer
     
     if (result < 0){
       printf("error with nread");
       return false;
     }
     else{
-      fdRead += result;
+      fdRead += result; //increment bytes read
     }
   }
   return true;
@@ -37,19 +37,33 @@ static bool nread(int fd, int len, uint8_t *buf) {
 It may need to call the system call "write" multiple times to reach the size len.
 */
 static bool nwrite(int fd, int len, uint8_t *buf) {
-  int fdWrite = 0;
+  int fdWrite = 0; //holds number of bytes written
 
-  while(fdWrite < len){
+  while(fdWrite < len){ //loop continues until we write len bytes
     int result = write(fd, &buf[fdWrite], len - fdWrite);
     if (result < 0){
       printf("error with nwrite");
       return false;
     }
     else{
-      fdWrite += result;
+      fdWrite += result; //increment bytes written
     }
   }
   return true;
+}
+
+//checks if a bit is set to 1 or not
+//n is the number, k is the position of the bit you want to check
+int checkBit(int n, int k)
+{
+  if (n & (1 << k)){
+    printf("bit set\n");
+    return true;
+  }
+  else{
+    printf("bit not set\n");
+    return false;
+    }
 }
 
 /* Through this function call the client attempts to receive a packet from sd 
@@ -68,24 +82,31 @@ a block of data from the server. You may use the above nread function here.
 */
 static bool recv_packet(int sd, uint32_t *op, uint8_t *ret, uint8_t *block) {
   uint8_t header[HEADER_LEN];
-  uint8_t len;
 
-  if (nread(sd, HEADER_LEN, header) == false){ //if header read isn't successful, return false
+  //read the packet header first
+  if (nread(sd, HEADER_LEN, header) == false){
     printf("error");
     return false;
   }
 
-  memcpy(&len, header, sizeof(len)); //0
-  memcpy(op, &header[sizeof(len)], sizeof(*op)); //add size of len and header
-  memcpy(ret, &header[sizeof(*op) + sizeof(len)], sizeof(*ret)); //add size of len, op, and header together
-
-  len = ntohs(len);
+  //converts between host and network byte order
   *op = ntohl(*op);
   *ret = ntohs(*ret);
 
-  if(len == (HEADER_LEN + JBOD_BLOCK_SIZE)){
-    if (nread(sd, JBOD_BLOCK_SIZE, block) == false){
-      return false;
+  memcpy(op, &header[sizeof(*ret)], sizeof(*op)); //copy 1 byte to op
+
+  //check if lowest bit is 0
+  //if it is, do a memcpy for ret
+  //false means the lowest bit is 0
+  if(checkBit(*ret, 0) == false){
+    memcpy(ret, &header[sizeof(*op)], sizeof(*ret)); //copy 4 byte to ret
+  }
+
+  //check if block data exists by checking if the second lowest bit of ret is 1. if it is, read block
+  //true means the second lowest bit is 1
+  if(checkBit(*ret, 1) == true){
+    if (nread(sd, JBOD_BLOCK_SIZE, block) == false){ //read from block
+        return false;
     }
   }
 
@@ -105,26 +126,25 @@ The above information (when applicable) has to be wrapped into a jbod request pa
 You may call the above nwrite function to do the actual sending.  
 */
 static bool send_packet(int sd, uint32_t op, uint8_t *block) {
-  uint8_t packet[HEADER_LEN + JBOD_BLOCK_SIZE];
+  uint8_t packet[HEADER_LEN + JBOD_BLOCK_SIZE]; //5 and 256 bytes
   uint32_t cmd = op >> 12;
-  uint16_t temp;
-  uint16_t len = HEADER_LEN;
+  uint8_t ret = 0;
 
-  if (cmd == JBOD_WRITE_BLOCK){
-    len += JBOD_BLOCK_SIZE;
-  }
-
-  temp = htons(len);
+  //conversion
   op = htonl(op);
+  ret = htons(ret);
 
-  memcpy(packet + sizeof(temp), &temp, sizeof(temp));
-  memcpy(packet + 3, &op, sizeof(op));
+  memcpy(&packet[sizeof(ret)], &op, sizeof(op)); //write to packet for 5 bytes
+  memcpy(&packet[sizeof(op)], &ret, sizeof(ret));
 
-  if(len > HEADER_LEN){
-    memcpy(packet + HEADER_LEN, block, JBOD_BLOCK_SIZE);
-  }
-
-  return nwrite(sd, len, packet);
+  //when command is JBOD_WRITE_BLOCK, write block to packet
+  if (cmd == JBOD_WRITE_BLOCK){
+      memcpy(&packet[HEADER_LEN], block, JBOD_BLOCK_SIZE);
+      if(nwrite(sd, HEADER_LEN + JBOD_BLOCK_SIZE, packet) == false){ //write packet to server
+        return false;
+      }
+    }
+  return true;
 }
 
 
@@ -177,7 +197,16 @@ return: 0 means success, -1 means failure.
 int jbod_client_operation(uint32_t op, uint8_t *block) {
   uint8_t ret = 0;
 
-  send_packet(cli_sd, op, block);
-  recv_packet(cli_sd, &op, &ret, block);
+  if(send_packet(cli_sd, op, block) == true){
+    return 0;
+  }
+
+  if(recv_packet(cli_sd, &op, &ret, block) == true){
+    return 0;
+  }
+
+  if(ret == -1){
+    return false;
+  }
   return ret;
 }
