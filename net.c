@@ -52,18 +52,6 @@ static bool nwrite(int fd, int len, uint8_t *buf) {
   return true;
 }
 
-//checks if a bit is set to 1 or not
-//n is the number, k is the position of the bit you want to check
-int checkBit(int n, int k)
-{
-  if (n & (1 << k)){
-    return true;
-  }
-  else{
-    return false;
-    }
-}
-
 /* Through this function call the client attempts to receive a packet from sd 
 (i.e., receiving a response from the server.). It happens after the client previously 
 forwarded a jbod operation call via a request message to the server.  
@@ -93,16 +81,6 @@ static bool recv_packet(int sd, uint32_t *op, uint8_t *ret, uint8_t *block) {
   memcpy(op, &header, sizeof(*op)); //copy from start of the header
   memcpy(ret, &header[sizeof(*op)], sizeof(*ret));
 
-  //check if lowest bit is 0
-  //if it is, do a memcpy for ret
-  /*if(checkBit(*ret, 0) == false){
-    memcpy(ret, &header[sizeof(*op)], sizeof(*ret));
-    //printf("success1 info code\n");
-  }
-  else{
-    printf("no memcpy of ret\n");
-  }*/
-
   //check if block data exists by checking if the second lowest bit of ret is 1. if it is, read block
   //true means the second lowest bit is 1
   if(*ret == 2){
@@ -113,10 +91,6 @@ static bool recv_packet(int sd, uint32_t *op, uint8_t *ret, uint8_t *block) {
 
   return true;
 }
-
-//test
-
-
 
 /* The client attempts to send a jbod request packet to sd (i.e., the server socket here); 
 returns true on success and false on failure. 
