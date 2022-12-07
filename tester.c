@@ -101,7 +101,6 @@ int run_workload(char *workload, int cache_size) {
   int line_num = 0;
   while (fgets(line, 256, f)) {
     ++line_num;
-    //printf("%d processing line\n", line_num);
     line[strlen(line)-1] = '\0';
     if (equals(line, "MOUNT")) {
       rc = mdadm_mount();
