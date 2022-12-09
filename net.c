@@ -108,7 +108,7 @@ static bool send_packet(int sd, uint32_t op, uint8_t *block) {
   uint8_t ret = 0;
 
   if (cmd == JBOD_WRITE_BLOCK){
-    ret = 2;
+    ret = 2; //set ret to 00000010
   }
   
   else{
